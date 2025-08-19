@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TEAM_COLORS } from "@/lib/team-colors";
+import type { TeamSummary } from "@shared/schema";
 
 export default function Summary() {
   const { code } = useParams();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({
     queryKey: ["/api/rooms", code, "summary"],
   });
 
@@ -63,8 +64,8 @@ export default function Summary() {
 
         {/* Final Team Standings */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          {teams.map((team: any) => {
-            const colors = TEAM_COLORS[team.teamCode];
+          {teams.map((team) => {
+            const colors = TEAM_COLORS[team.teamCode as keyof typeof TEAM_COLORS];
             const totalSpent = team.players.reduce((sum: number, p: any) => sum + p.price, 0);
             
             return (

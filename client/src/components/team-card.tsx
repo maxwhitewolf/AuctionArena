@@ -1,14 +1,15 @@
 import { Badge } from "@/components/ui/badge";
 import { TEAM_COLORS } from "@/lib/team-colors";
+import type { RoomTeam, Player } from "@shared/schema";
 
 interface TeamCardProps {
-  team: any;
+  team: RoomTeam;
   isUserTeam: boolean;
-  currentPlayer?: any;
+  currentPlayer?: Player;
 }
 
 export function TeamCard({ team, isUserTeam, currentPlayer }: TeamCardProps) {
-  const colors = TEAM_COLORS[team.teamCode];
+  const colors = TEAM_COLORS[team.teamCode as keyof typeof TEAM_COLORS];
   
   // Calculate if team is active for current player
   const isActive = !team.hasEnded && team.totalCount < 20;

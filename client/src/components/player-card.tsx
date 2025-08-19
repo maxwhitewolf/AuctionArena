@@ -1,10 +1,11 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TEAM_COLORS } from "@/lib/team-colors";
+import type { Player, Bid } from "@shared/schema";
 
 interface PlayerCardProps {
-  player: any;
-  lastBid?: any;
+  player: Player;
+  lastBid?: Bid;
   nextMinBid?: number;
 }
 
@@ -44,10 +45,10 @@ export function PlayerCard({ player, lastBid, nextMinBid }: PlayerCardProps) {
               <div className="bg-blue-50 inline-flex items-center px-4 py-2 rounded-full">
                 <div 
                   className="w-4 h-4 rounded-full mr-2"
-                  style={{ backgroundColor: TEAM_COLORS[lastBid.teamCode].primary }}
+                  style={{ backgroundColor: TEAM_COLORS[lastBid.teamCode as keyof typeof TEAM_COLORS].primary }}
                 ></div>
                 <span className="text-blue-800 font-medium">
-                  {TEAM_COLORS[lastBid.teamCode].name}
+                  {TEAM_COLORS[lastBid.teamCode as keyof typeof TEAM_COLORS].name}
                 </span>
               </div>
             </>

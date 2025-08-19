@@ -1,4 +1,4 @@
-import { type Room, type InsertRoom, type RoomMember, type InsertRoomMember, type RoomTeam, type InsertRoomTeam, type Player, type InsertPlayer, type Bid, type InsertBid, type Skip, type SquadPlayer, type PlayerQueue, IPL_TEAMS, PLAYER_ROLES, STARTING_PURSE_L, ROOM_STATUS } from "@shared/schema";
+import { type Room, type InsertRoom, type RoomMember, type InsertRoomMember, type RoomTeam, type InsertRoomTeam, type Player, type InsertPlayer, type Bid, type InsertBid, type Skip, type SquadPlayer, type PlayerQueue, IPL_TEAMS, PLAYER_ROLES, STARTING_PURSE_L, ROOM_STATUS, type PlayerRole, type TeamCode } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -32,13 +32,13 @@ export interface IStorage {
   getLastBid(roomId: string, playerId: string): Promise<Bid | undefined>;
   
   // Skip operations
-  addSkip(roomId: string, playerId: string, teamCode: string): Promise<Skip>;
+  addSkip(roomId: string, playerId: string, teamCode: TeamCode): Promise<Skip>;
   getSkips(roomId: string, playerId: string): Promise<Skip[]>;
   clearSkips(roomId: string, playerId: string): Promise<void>;
   
   // Squad operations
-  addSquadPlayer(roomId: string, teamCode: string, playerId: string, price: number): Promise<SquadPlayer>;
-  getSquadPlayers(roomId: string, teamCode?: string): Promise<SquadPlayer[]>;
+  addSquadPlayer(roomId: string, teamCode: TeamCode, playerId: string, price: number): Promise<SquadPlayer>;
+  getSquadPlayers(roomId: string, teamCode?: TeamCode): Promise<SquadPlayer[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -57,7 +57,7 @@ export class MemStorage implements IStorage {
 
   private initializePlayers() {
     // Sample IPL players data
-    const playersData = [
+    const playersData: Array<{ name: string; role: PlayerRole; nationality: string; basePrice: number }> = [
       { name: "Virat Kohli", role: "Batsman", nationality: "India", basePrice: 200 },
       { name: "MS Dhoni", role: "Wicket-Keeper", nationality: "India", basePrice: 200 },
       { name: "Rohit Sharma", role: "Batsman", nationality: "India", basePrice: 200 },
@@ -108,6 +108,8 @@ export class MemStorage implements IStorage {
       id,
       code,
       ...insertRoom,
+      status: insertRoom.status || ROOM_STATUS.LOBBY,
+      countdownSeconds: insertRoom.countdownSeconds || 30,
       currentPlayerId: null,
       currentDeadlineAt: null,
       version: 0,
@@ -135,6 +137,9 @@ export class MemStorage implements IStorage {
     const member: RoomMember = {
       id,
       ...insertMember,
+      role: insertMember.role || 'team',
+      selectionOrder: insertMember.selectionOrder || null,
+      hasEnded: insertMember.hasEnded || false,
       joinedAt: new Date(),
     };
     this.roomMembers.set(id, member);
@@ -161,6 +166,7 @@ export class MemStorage implements IStorage {
     const team: RoomTeam = {
       id,
       ...insertTeam,
+      teamCode: insertTeam.teamCode,
       purseLeft: insertTeam.purseLeft || STARTING_PURSE_L,
       totalCount: insertTeam.totalCount || 0,
       overseasCount: insertTeam.overseasCount || 0,
@@ -236,6 +242,7 @@ export class MemStorage implements IStorage {
     const bid: Bid = {
       id,
       ...insertBid,
+      teamCode: insertBid.teamCode,
       placedAt: new Date(),
     };
     this.bids.set(id, bid);
@@ -253,13 +260,13 @@ export class MemStorage implements IStorage {
     return bids[0];
   }
 
-  async addSkip(roomId: string, playerId: string, teamCode: string): Promise<Skip> {
+  async addSkip(roomId: string, playerId: string, teamCode: TeamCode): Promise<Skip> {
     const id = randomUUID();
     const skip: Skip = {
       id,
       roomId,
       playerId,
-      teamCode,
+      teamCode: teamCode,
       skippedAt: new Date(),
     };
     this.skips.set(id, skip);
@@ -280,12 +287,12 @@ export class MemStorage implements IStorage {
     });
   }
 
-  async addSquadPlayer(roomId: string, teamCode: string, playerId: string, price: number): Promise<SquadPlayer> {
+  async addSquadPlayer(roomId: string, teamCode: TeamCode, playerId: string, price: number): Promise<SquadPlayer> {
     const id = randomUUID();
     const squadPlayer: SquadPlayer = {
       id,
       roomId,
-      teamCode,
+      teamCode: teamCode,
       playerId,
       price,
       purchasedAt: new Date(),
@@ -294,7 +301,7 @@ export class MemStorage implements IStorage {
     return squadPlayer;
   }
 
-  async getSquadPlayers(roomId: string, teamCode?: string): Promise<SquadPlayer[]> {
+  async getSquadPlayers(roomId: string, teamCode?: TeamCode): Promise<SquadPlayer[]> {
     return Array.from(this.squadPlayers.values())
       .filter(squad => {
         if (squad.roomId !== roomId) return false;

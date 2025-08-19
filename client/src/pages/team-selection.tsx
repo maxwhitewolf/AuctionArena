@@ -9,6 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { IPL_TEAMS } from "@/lib/constants";
 import { TEAM_COLORS } from "@/lib/team-colors";
 import { useEffect } from "react";
+import type { RoomWithMembers } from "@shared/schema";
 
 export default function TeamSelection() {
   const { code } = useParams();
@@ -17,7 +18,7 @@ export default function TeamSelection() {
   const queryClient = useQueryClient();
   const userId = localStorage.getItem("userId");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<RoomWithMembers>({
     queryKey: ["/api/rooms", code],
     refetchInterval: 2000,
   });
@@ -66,7 +67,7 @@ export default function TeamSelection() {
 
   // Auto-redirect based on room status
   useEffect(() => {
-    if (data) {
+    if (data?.room) {
       const { room } = data;
       if (room.status === 'live') {
         setLocation(`/r/${code}/auction`);
@@ -95,11 +96,11 @@ export default function TeamSelection() {
 
   const { room, members, teams } = data;
   const isHost = room.hostUserId === userId;
-  const teamMembers = members.filter((m: any) => m.role === 'team' || m.role === 'host');
-  const selectedTeams = teams.map((t: any) => t.teamCode);
-  const userTeam = teams.find((t: any) => t.userId === userId);
+  const teamMembers = members.filter((m) => m.role === 'team' || m.role === 'host');
+  const selectedTeams = teams.map((t) => t.teamCode);
+  const userTeam = teams.find((t) => t.userId === userId);
   
-  const currentTurnMember = teamMembers.find((m: any) => 
+  const currentTurnMember = teamMembers.find((m) => 
     m.selectionOrder === teams.length + 1
   );
   const isUserTurn = currentTurnMember?.userId === userId;
@@ -151,8 +152,8 @@ export default function TeamSelection() {
             <div className="mb-8">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Selection Order</h3>
               <div className="flex flex-wrap gap-3">
-                {teamMembers.map((member: any) => {
-                  const memberTeam = teams.find((t: any) => t.userId === member.userId);
+                {teamMembers.map((member) => {
+                  const memberTeam = teams.find((t) => t.userId === member.userId);
                   const isCurrent = member.selectionOrder === teams.length + 1;
                   const hasSelected = !!memberTeam;
                   
@@ -204,8 +205,8 @@ export default function TeamSelection() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               {IPL_TEAMS.map((teamCode) => {
                 const isSelected = selectedTeams.includes(teamCode);
-                const colors = TEAM_COLORS[teamCode];
-                const selectedBy = teams.find((t: any) => t.teamCode === teamCode);
+                const colors = TEAM_COLORS[teamCode as keyof typeof TEAM_COLORS];
+                const selectedBy = teams.find((t) => t.teamCode === teamCode);
                 const canSelect = !userTeam && isUserTurn && !isSelected;
 
                 return (
@@ -265,19 +266,21 @@ export default function TeamSelection() {
                     "All players have selected their teams. Ready to start auction!"
                   )}
                 </div>
-                <Button 
-                  onClick={() => startAuctionMutation.mutate()}
-                  disabled={teams.length < 2 || startAuctionMutation.isPending}
-                  className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
-                >
-                  {startAuctionMutation.isPending ? (
-                    <>Starting...</>
-                  ) : (
-                    <>
-                      <i className="fas fa-play mr-2"></i>Start Auction
-                    </>
-                  )}
-                </Button>
+                <div className="flex space-x-2">
+                  <Button 
+                    onClick={() => startAuctionMutation.mutate()}
+                    disabled={teams.length < 2 || startAuctionMutation.isPending}
+                    className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
+                  >
+                    {startAuctionMutation.isPending ? (
+                      <>Starting...</>
+                    ) : (
+                      <>
+                        <i className="fas fa-play mr-2"></i>Start Auction
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

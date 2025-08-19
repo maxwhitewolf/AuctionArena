@@ -1,0 +1,274 @@
+Awesome — here’s a clean, complete spec of every rule/feature AFTER a user joins a room (your authoritative logic). It’s written so you can drop it straight into Cursor as acceptance criteria + pseudocode.
+
+1) Room membership & limits (after join)
+
+Players per room: min 2, max 10 (teams = players).
+
+If >10 try to join → reject with ROOM_FULL.
+
+Spectators: allowed (optional), don’t count toward 2–10.
+
+Join order: host = order 1; subsequent players get order 2..N by join time.
+
+Rejoin: a player can reconnect (same user ID) and resumes their role/team.
+
+AFK timeout (optional but recommended): if a player is inactive for X minutes during team selection or live auction, host can kick or skip turn.
+
+Lobby invariants after join
+
+players_count in [2, 10] to proceed
+each user_id unique in room_members
+host exists and is connected or reassignable
+
+2) Roles
+
+host (room owner)
+
+team (player controlling exactly one IPL team)
+
+spectator (read-only)
+
+Host capabilities (after join):
+
+Start Team Selection (only if players ≥ 2).
+
+Force Next Turn in team selection (if someone AFK).
+
+Start/Pause/Resume auction.
+
+Kick AFK players (optional).
+
+Transfer host to another player (optional, safe if host disconnects).
+
+3) Team Selection phase (starts after enough players join)
+
+Status flow: lobby → team_selection
+
+Available teams (unique): ['CSK','MI','RCB','KKR','SRH','RR','DC','PBKS','LSG','GT']
+
+Turn order: host picks first, then by selection_order (join order).
+
+One team per player; once chosen, it’s locked & disabled for others.
+
+Min teams to proceed: 2; Max teams = number of players (≤10).
+
+Completion: when all players picked (or host clicks Complete with ≥2 picks) → status live.
+
+Pseudocode
+
+startTeamSelection():
+  require players_count >= 2
+  room.status = 'team_selection'
+  set selection_order: host=1, others by joined_at
+
+selectTeam(user, team_code):
+  require room.status == 'team_selection'
+  require isUsersTurn(user)
+  require team_code in IPL_TEAMS and not taken
+  assign team to user; persist room_teams row
+  advanceTurn()
+
+completeTeamSelection(host):
+  require chosen_teams_count >= 2
+  room.status = 'live'
+  initAuctionCursor()
+  introNextPlayer()
+
+4) Universal auction rules (active once live)
+
+Purse: ₹100 Cr per team = 10,000 Lakhs.
+
+Team size: min 15, max 20 players.
+
+Currency unit internal: Lakhs. Use display helper (₹K / ₹L / ₹Cr).
+
+Only selected teams can bid (i.e., the 2–10 that picked in this room).
+
+Room proceeds player-by-player according to room_player_queue.
+
+Active team (per current lot)
+A team is active if all:
+
+has_ended == false
+
+total_count < 20
+
+purse_left >= minPossibleNextBid(current_lot)
+
+If not active → show “Bid ended” on their tile for this lot (can still be active on later lots if affordable).
+
+5) Bidding cycle (per player)
+
+On Player Intro
+
+Set room.current_player_id = player_id
+
+Clear skips for this (room, player)
+
+lastBid = null
+
+current_deadline_at = now + countdown_seconds
+
+Broadcast playerIntro
+
+Placing a bid
+Validation must pass:
+
+Room is live, time now < current_deadline_at
+
+Caller owns a selected team (not spectator)
+
+Team is active for this lot
+
+Increment rule satisfied:
+
+If no last bid: amount >= max(base_price, incFor(base_price))
+
+Else: amount == lastBid + incFor(lastBid)
+
+Optimistic concurrency: client.version == room.version
+
+On success:
+
+Insert bid, room.version += 1
+
+Set lastBid = { team_code, amount }
+
+Extend current_deadline_at = now + countdown
+
+Broadcast bidUpdated(amount, team, version)
+
+Skip
+
+Any active team can press Skip → record skips(room, player, team)
+
+Skip-all rule: if all active teams have skipped and there is no last bid, instantly UNSOLD and advance to next lot (no wait).
+
+Finalize (deadline)
+
+When now >= current_deadline_at, call atomic finalize:
+
+If lastBid != null → SOLD to that team; debit purse, add to squad, increment counts, mark queue sold.
+
+Else → UNSOLD; mark queue unsold.
+
+Clear skips for that player.
+
+Advance to next queued player (if any) → intro with new deadline.
+
+If no next queued player → attempt to end room.
+
+Exactly-once guarantee
+
+Wrap finalize in a transaction + advisory lock keyed by room_code.
+
+6) “End my bidding” (per team)
+
+Available only when the team already has ≥ 15 players.
+
+Sets has_ended = true for that team → they cannot bid anymore (ever), but remain visible.
+
+If all teams have has_ended = true, the room ends → summary.
+
+Pseudocode
+
+endMyBidding(userTeam):
+  require userTeam.total_count >= 15
+  userTeam.has_ended = true
+  broadcast teamEnded
+  tryEndRoom()
+
+7) Ending the room & Summary
+
+End when:
+
+All selected teams has_ended = true, or
+
+Queue has no more players
+
+Actions:
+
+Set room.status = 'ended'
+
+Broadcast auctionEnded
+
+Redirect to /r/[code]/summary:
+
+For each team: table of players (Name, Role, Price), totals, purse left, counts
+
+Optional export CSV buttons
+
+Pseudocode
+
+tryEndRoom():
+  if all selected teams have has_ended == true or queueEmpty():
+    room.status = 'ended'
+    broadcast auctionEnded
+
+8) Edge cases & guardrails (important!)
+
+Player cap enforcement: reject award if it would exceed 20; if at 20 at finalize time, treat team as ineligible (shouldn’t happen if active filter is correct).
+
+Purse floor: team must be able to meet next minimum; equality allowed.
+
+Overseas count: increment on finalize if player.nationality != 'India' (use if you enforce a max later).
+
+Turn-taking in Team Selection: only current turn user can pick; host can force next if AFK (optional).
+
+Ownership transfer (optional): if host leaves, transfer to next available team by selection order.
+
+Kicking players (optional): host can remove AFK players before live auction; if during live, dangerous—prefer “mark team has_ended”.
+
+Room code reuse: code unique while room exists; expire old rooms (e.g., 24 hrs) or mark archived.
+
+Spectators: cannot bid/skip/end-bidding; can view squads & timer.
+
+Rate limits: e.g., /bid 10 req/s per team; /skip 5 req/s per team; reject with RATE_LIMIT.
+
+9) Event & API summary (what fires after join)
+
+Realtime events
+
+roomState (status, rules, deadline, cursor, active team list)
+
+teamSelected, teamSelectionTurnChanged
+
+playerIntro, bidUpdated, playerSold, playerUnsold
+
+teamEnded, auctionEnded
+
+HTTP/Routes (already in your app)
+
+POST /team-selection/start
+
+POST /select-team
+
+POST /team-selection/complete
+
+POST /bid
+
+POST /skip
+
+POST /end-bidding
+
+POST /finalize (or Edge Function invoke)
+
+GET /state, GET /queue, GET /summary
+
+10) Core helpers (formulas)
+incFor(x):
+  # tiered increment table, e.g.
+  if x < 10000: return 500
+  if x < 50000: return 1000
+  if x < 100000: return 5000
+  return 10000
+
+expectedNextAmount(lastBid, base):
+  if lastBid == null:
+    return max(base, incFor(base))
+  return lastBid.amount + incFor(lastBid.amount)
+
+isActive(team, player, lastBid):
+  if team.has_ended or team.total_count >= 20: return false
+  nextMin = expectedNextAmount(lastBid, player.base_price)
+  return team.purse_left >= nextMin

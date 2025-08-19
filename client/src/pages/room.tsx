@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useEffect } from "react";
+import type { RoomWithMembers } from "@shared/schema";
 
 export default function Room() {
   const { code } = useParams();
@@ -16,7 +17,7 @@ export default function Room() {
   const queryClient = useQueryClient();
   const userId = localStorage.getItem("userId");
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery<RoomWithMembers>({
     queryKey: ["/api/rooms", code],
     refetchInterval: 2000, // Poll every 2 seconds
   });
@@ -44,7 +45,7 @@ export default function Room() {
 
   // Auto-redirect based on room status
   useEffect(() => {
-    if (data) {
+    if (data?.room) {
       const { room } = data;
       if (room.status === 'team_selection') {
         setLocation(`/r/${code}/teams`);
@@ -93,7 +94,7 @@ export default function Room() {
 
   const { room, members, teams } = data;
   const isHost = room.hostUserId === userId;
-  const teamMembers = members.filter((m: any) => m.role === 'team' || m.role === 'host');
+  const teamMembers = members.filter((m) => m.role === 'team' || m.role === 'host');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -131,12 +132,12 @@ export default function Room() {
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Lobby</h2>
                 <p className="text-gray-600 mb-4">Waiting for players to join the room.</p>
                 <div className="flex items-center space-x-4 text-sm text-gray-600">
-                  <span>Players: <strong>{teamMembers.length}</strong></span>
+                  <span>Players: <strong>{teamMembers.length}/10</strong></span>
                   <span>•</span>
                   <span>Status: <strong className="capitalize">{room.status}</strong></span>
                 </div>
               </div>
-              {isHost && teamMembers.length >= 2 && room.status === 'lobby' && (
+              {isHost && teamMembers.length >= 2 && teamMembers.length <= 10 && room.status === 'lobby' && (
                 <Button 
                   onClick={() => startTeamSelectionMutation.mutate()}
                   disabled={startTeamSelectionMutation.isPending}
@@ -158,9 +159,9 @@ export default function Room() {
         {/* Members List */}
         <Card>
           <CardContent className="p-6">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">Players ({teamMembers.length})</h3>
+            <h3 className="text-xl font-bold text-gray-900 mb-4">Players ({teamMembers.length}/10)</h3>
             <div className="space-y-3">
-              {teamMembers.map((member: any, index: number) => (
+              {teamMembers.map((member, index) => (
                 <div
                   key={member.id}
                   className={`flex items-center justify-between p-4 rounded-lg border ${
@@ -195,6 +196,15 @@ export default function Room() {
                 <div className="flex items-center">
                   <i className="fas fa-info-circle text-yellow-600 mr-2"></i>
                   <span className="text-yellow-800">Need at least 2 players to start the auction.</span>
+                </div>
+              </div>
+            )}
+
+            {teamMembers.length >= 10 && (
+              <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center">
+                  <i className="fas fa-exclamation-triangle text-red-600 mr-2"></i>
+                  <span className="text-red-800">Room is full. Maximum 10 players allowed.</span>
                 </div>
               </div>
             )}

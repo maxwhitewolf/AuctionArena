@@ -12,6 +12,7 @@ import { PlayerCard } from "@/components/player-card";
 import { BidControls } from "@/components/bid-controls";
 import { TeamCard } from "@/components/team-card";
 import { useEffect } from "react";
+import type { RoomWithMembers, AuctionState } from "@shared/schema";
 
 export default function Auction() {
   const { code } = useParams();
@@ -20,12 +21,12 @@ export default function Auction() {
   const queryClient = useQueryClient();
   const userId = localStorage.getItem("userId");
 
-  const { data: roomData, isLoading: roomLoading } = useQuery({
+  const { data: roomData, isLoading: roomLoading } = useQuery<RoomWithMembers>({
     queryKey: ["/api/rooms", code],
     refetchInterval: 2000,
   });
 
-  const { data: auctionData, isLoading: auctionLoading } = useQuery({
+  const { data: auctionData, isLoading: auctionLoading } = useQuery<AuctionState>({
     queryKey: ["/api/rooms", code, "auction"],
     refetchInterval: 1000, // More frequent updates during auction
   });
@@ -112,7 +113,7 @@ export default function Auction() {
 
   // Auto-redirect based on room status
   useEffect(() => {
-    if (roomData) {
+    if (roomData?.room) {
       const { room } = roomData;
       if (room.status === 'ended') {
         setLocation(`/r/${code}/summary`);
@@ -144,7 +145,7 @@ export default function Auction() {
 
   const { room: roomInfo } = roomData;
   const { room, currentPlayer, lastBid, bids, teams, nextMinBid } = auctionData;
-  const userTeam = teams.find((t: any) => t.userId === userId);
+  const userTeam = teams.find((t) => t.userId === userId);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -157,7 +158,7 @@ export default function Auction() {
               <div className="flex items-center space-x-4 text-sm text-gray-600">
                 <span>Room: <strong>{room.code}</strong></span>
                 <span>•</span>
-                <span>Teams: <strong>{teams.filter((t: any) => !t.hasEnded).length} Active</strong></span>
+                <span>Teams: <strong>{teams.filter((t) => !t.hasEnded).length} Active</strong></span>
               </div>
             </div>
             <div className="flex items-center space-x-4">
@@ -203,8 +204,8 @@ export default function Auction() {
                   {bids.length === 0 ? (
                     <p className="text-gray-500 text-center py-8">No bids yet</p>
                   ) : (
-                    bids.map((bid: any, index: number) => {
-                      const teamColor = TEAM_COLORS[bid.teamCode];
+                    bids.map((bid, index) => {
+                      const teamColor = TEAM_COLORS[bid.teamCode as keyof typeof TEAM_COLORS];
                       const timeAgo = Math.floor((Date.now() - new Date(bid.placedAt).getTime()) / 1000);
                       
                       return (
@@ -242,7 +243,7 @@ export default function Auction() {
               <CardContent className="p-6">
                 <h3 className="text-xl font-bold text-gray-900 mb-4">Team Status</h3>
                 <div className="space-y-4">
-                  {teams.map((team: any) => (
+                  {teams.map((team) => (
                     <TeamCard
                       key={team.id}
                       team={team}

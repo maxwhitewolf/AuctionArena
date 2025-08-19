@@ -11,11 +11,15 @@ export const ROOM_STATUS = {
   ENDED: 'ended'
 } as const;
 
+export type RoomStatus = typeof ROOM_STATUS[keyof typeof ROOM_STATUS];
+
 // IPL Teams
 export const IPL_TEAMS = ['CSK', 'MI', 'RCB', 'KKR', 'SRH', 'RR', 'DC', 'PBKS', 'LSG', 'GT'] as const;
+export type TeamCode = typeof IPL_TEAMS[number];
 
 // Player roles
 export const PLAYER_ROLES = ['Batsman', 'Bowler', 'All-Rounder', 'Wicket-Keeper'] as const;
+export type PlayerRole = typeof PLAYER_ROLES[number];
 
 // Constants
 export const STARTING_PURSE_L = 10000; // 100 Crore = 10,000 Lakhs
@@ -28,7 +32,7 @@ export const rooms = pgTable("rooms", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: varchar("code", { length: 6 }).notNull().unique(),
   name: text("name").notNull(),
-  status: varchar("status").notNull().$type<keyof typeof ROOM_STATUS>().default(ROOM_STATUS.LOBBY),
+  status: text("status").notNull().default(ROOM_STATUS.LOBBY),
   hostUserId: varchar("host_user_id").notNull(),
   currentPlayerId: varchar("current_player_id"),
   currentDeadlineAt: timestamp("current_deadline_at"),
@@ -43,7 +47,7 @@ export const roomMembers = pgTable("room_members", {
   roomId: varchar("room_id").notNull(),
   userId: varchar("user_id").notNull(),
   username: text("username").notNull(),
-  role: varchar("role").notNull().default('team'), // 'host', 'team', 'spectator'
+  role: varchar("role").notNull().default('team'), // 'host', 'team'
   joinedAt: timestamp("joined_at").notNull().default(sql`now()`),
   selectionOrder: integer("selection_order"),
   hasEnded: boolean("has_ended").notNull().default(false),
@@ -53,7 +57,7 @@ export const roomMembers = pgTable("room_members", {
 export const roomTeams = pgTable("room_teams", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   roomId: varchar("room_id").notNull(),
-  teamCode: varchar("team_code", { length: 4 }).notNull().$type<typeof IPL_TEAMS[number]>(),
+  teamCode: text("team_code").notNull(),
   userId: varchar("user_id").notNull(),
   username: text("username").notNull(),
   selectionOrder: integer("selection_order").notNull(),
@@ -67,7 +71,7 @@ export const roomTeams = pgTable("room_teams", {
 export const players = pgTable("players", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  role: varchar("role").notNull().$type<typeof PLAYER_ROLES[number]>(),
+  role: text("role").notNull(),
   nationality: text("nationality").notNull(),
   basePrice: integer("base_price").notNull(), // in Lakhs
   stats: jsonb("stats"), // flexible stats object
@@ -88,7 +92,7 @@ export const bids = pgTable("bids", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   roomId: varchar("room_id").notNull(),
   playerId: varchar("player_id").notNull(),
-  teamCode: varchar("team_code", { length: 4 }).notNull().$type<typeof IPL_TEAMS[number]>(),
+  teamCode: text("team_code").notNull(),
   amount: integer("amount").notNull(), // in Lakhs
   placedAt: timestamp("placed_at").notNull().default(sql`now()`),
 });
@@ -98,7 +102,7 @@ export const skips = pgTable("skips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   roomId: varchar("room_id").notNull(),
   playerId: varchar("player_id").notNull(),
-  teamCode: varchar("team_code", { length: 4 }).notNull().$type<typeof IPL_TEAMS[number]>(),
+  teamCode: text("team_code").notNull(),
   skippedAt: timestamp("skipped_at").notNull().default(sql`now()`),
 });
 
@@ -106,7 +110,7 @@ export const skips = pgTable("skips", {
 export const squadPlayers = pgTable("squad_players", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   roomId: varchar("room_id").notNull(),
-  teamCode: varchar("team_code", { length: 4 }).notNull().$type<typeof IPL_TEAMS[number]>(),
+  teamCode: text("team_code").notNull(),
   playerId: varchar("player_id").notNull(),
   price: integer("price").notNull(), // final winning bid in Lakhs
   purchasedAt: timestamp("purchased_at").notNull().default(sql`now()`),
@@ -117,6 +121,7 @@ export const insertRoomSchema = createInsertSchema(rooms).omit({
   id: true,
   createdAt: true,
   version: true,
+  code: true,
 });
 
 export const insertRoomMemberSchema = createInsertSchema(roomMembers).omit({
@@ -178,3 +183,30 @@ export type AuctionState = {
 export type TeamSummary = RoomTeam & {
   players: (SquadPlayer & { player: Player })[];
 };
+
+// Helper function for minimum increments
+export function getMinIncrement(amount: number): number {
+  if (amount < 5000) return 500; // 5L increment below 50Cr  
+  if (amount < 10000) return 1000; // 10L increment 50Cr-100Cr
+  if (amount < 50000) return 2500; // 25L increment 100Cr-500Cr
+  if (amount < 100000) return 5000; // 50L increment 500Cr-1000Cr
+  return 10000; // 100L increment above 1000Cr
+}
+
+// Expected next amount calculation
+export function expectedNextAmount(lastBid: Bid | null | undefined, basePrice: number): number {
+  if (!lastBid) {
+    return Math.max(basePrice, getMinIncrement(basePrice));
+  }
+  return lastBid.amount + getMinIncrement(lastBid.amount);
+}
+
+// Check if team is active for current player
+export function isTeamActive(team: RoomTeam, currentPlayer: Player, lastBid: Bid | null | undefined): boolean {
+  if (team.hasEnded || team.totalCount >= TEAM_MAX) {
+    return false;
+  }
+  
+  const nextMinBid = expectedNextAmount(lastBid, currentPlayer.basePrice);
+  return team.purseLeft >= nextMinBid;
+}

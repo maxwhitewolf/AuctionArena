@@ -1,40 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertRoomSchema, insertRoomMemberSchema, insertRoomTeamSchema, IPL_TEAMS, ROOM_STATUS, STARTING_PURSE_L, TEAM_MAX, TEAM_MIN } from "@shared/schema";
+import { insertRoomSchema, insertRoomMemberSchema, insertRoomTeamSchema, IPL_TEAMS, ROOM_STATUS, STARTING_PURSE_L, TEAM_MAX, TEAM_MIN, type TeamCode, getMinIncrement, expectedNextAmount, isTeamActive } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
-  // Helper function to calculate minimum increment based on current amount
-  function getMinIncrement(amount: number): number {
-    if (amount < 50) return 5; // 5L increment below 50L
-    if (amount < 100) return 10; // 10L increment 50L-100L
-    if (amount < 500) return 25; // 25L increment 100L-500L
-    if (amount < 1000) return 50; // 50L increment 500L-1000L
-    return 100; // 100L increment above 1000L
-  }
-
-  // Helper function to check if team is active for current player
-  async function isTeamActive(roomId: string, teamCode: string, currentPlayerId: string): Promise<boolean> {
-    const teams = await storage.getRoomTeams(roomId);
-    const team = teams.find(t => t.teamCode === teamCode);
-    
-    if (!team || team.hasEnded || team.totalCount >= TEAM_MAX) {
-      return false;
-    }
-
-    const currentPlayer = await storage.getPlayerById(currentPlayerId);
-    if (!currentPlayer) return false;
-
-    const lastBid = await storage.getLastBid(roomId, currentPlayerId);
-    const nextMinBid = lastBid 
-      ? lastBid.amount + getMinIncrement(lastBid.amount)
-      : Math.max(currentPlayer.basePrice, getMinIncrement(currentPlayer.basePrice));
-
-    return team.purseLeft >= nextMinBid;
-  }
-
   // Create room
   app.post("/api/rooms", async (req, res) => {
     try {
@@ -44,6 +15,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Room name and username are required" });
       }
 
+      // Check member limit
       const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const room = await storage.createRoom({
@@ -87,8 +59,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Room is not accepting new members" });
       }
 
-      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const existingMembers = await storage.getRoomMembers(room.id);
+      const teamMembers = existingMembers.filter(m => m.role === 'team' || m.role === 'host');
+      
+      // Enforce max 10 players
+      if (teamMembers.length >= 10) {
+        return res.status(400).json({ message: "Room is full (maximum 10 players)" });
+      }
+
+      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const member = await storage.addRoomMember({
         roomId: room.id,
@@ -293,9 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       let nextMinBid = undefined;
       if (currentPlayer) {
-        nextMinBid = lastBid 
-          ? lastBid.amount + getMinIncrement(lastBid.amount)
-          : Math.max(currentPlayer.basePrice, getMinIncrement(currentPlayer.basePrice));
+        nextMinBid = expectedNextAmount(lastBid, currentPlayer.basePrice);
       }
 
       res.json({
@@ -317,7 +294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Place bid
   app.post("/api/rooms/:code/bid", async (req, res) => {
     try {
-      const { userId, amount } = req.body;
+      const { userId, amount, version } = req.body;
       const room = await storage.getRoomByCode(req.params.code.toUpperCase());
       
       if (!room) {
@@ -336,6 +313,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Bidding time expired" });
       }
 
+      // Optimistic concurrency check
+      if (version !== undefined && version !== room.version) {
+        return res.status(409).json({ message: "Bid version conflict, please refresh" });
+      }
+
       const teams = await storage.getRoomTeams(room.id);
       const userTeam = teams.find(t => t.userId === userId);
       
@@ -343,21 +325,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "User team not found" });
       }
 
-      // Check if team is active
-      const teamActive = await isTeamActive(room.id, userTeam.teamCode, room.currentPlayerId);
-      if (!teamActive) {
-        return res.status(400).json({ message: "Team is not active for bidding" });
-      }
-
       const currentPlayer = await storage.getPlayerById(room.currentPlayerId);
       if (!currentPlayer) {
         return res.status(404).json({ message: "Current player not found" });
       }
 
+      // Check if team is active
       const lastBid = await storage.getLastBid(room.id, room.currentPlayerId);
-      const expectedAmount = lastBid 
-        ? lastBid.amount + getMinIncrement(lastBid.amount)
-        : Math.max(currentPlayer.basePrice, getMinIncrement(currentPlayer.basePrice));
+      const teamActive = isTeamActive(userTeam, currentPlayer, lastBid);
+      if (!teamActive) {
+        return res.status(400).json({ message: "Team is not active for bidding" });
+      }
+
+      const expectedAmount = expectedNextAmount(lastBid, currentPlayer.basePrice);
 
       if (amount !== expectedAmount) {
         return res.status(400).json({ 
@@ -377,14 +357,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amount,
       });
 
-      // Extend deadline
+      // Extend deadline and increment version
       const newDeadline = new Date(Date.now() + room.countdownSeconds * 1000);
       await storage.updateRoom(room.id, { 
         currentDeadlineAt: newDeadline,
         version: room.version + 1,
       });
 
-      res.json({ bid, newDeadline });
+      res.json({ bid, newDeadline, version: room.version + 1 });
     } catch (error) {
       console.error('Error placing bid:', error);
       res.status(500).json({ message: "Failed to place bid" });
@@ -412,30 +392,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "User team not found" });
       }
 
+      const currentPlayer = await storage.getPlayerById(room.currentPlayerId);
+      if (!currentPlayer) {
+        return res.status(404).json({ message: "Current player not found" });
+      }
+
       // Check if team is active
-      const teamActive = await isTeamActive(room.id, userTeam.teamCode, room.currentPlayerId);
+      const lastBid = await storage.getLastBid(room.id, room.currentPlayerId);
+      const teamActive = isTeamActive(userTeam, currentPlayer, lastBid);
       if (!teamActive) {
         return res.status(400).json({ message: "Team is not active for skipping" });
       }
 
-      const skip = await storage.addSkip(room.id, room.currentPlayerId, userTeam.teamCode);
+      const skip = await storage.addSkip(room.id, room.currentPlayerId, userTeam.teamCode as TeamCode);
 
-      // Check if all active teams have skipped
-      const lastBid = await storage.getLastBid(room.id, room.currentPlayerId);
+      // Check if all active teams have skipped and no bid exists
       if (!lastBid) {
         // Check if all active teams have skipped
-        const allActiveTeams = [];
-        for (const team of teams) {
-          const isActive = await isTeamActive(room.id, team.teamCode, room.currentPlayerId);
-          if (isActive) {
-            allActiveTeams.push(team.teamCode);
-          }
-        }
-
+        const allActiveTeams = teams.filter(team => isTeamActive(team, currentPlayer, lastBid));
         const skips = await storage.getSkips(room.id, room.currentPlayerId);
-        const skippedTeams = skips.map(s => s.teamCode);
+        const skippedTeamCodes = skips.map(s => s.teamCode);
         
-        const allSkipped = allActiveTeams.every(teamCode => skippedTeams.includes(teamCode));
+        const allSkipped = allActiveTeams.every(team => skippedTeamCodes.includes(team.teamCode));
         
         if (allSkipped) {
           // Mark player as unsold and advance immediately
@@ -446,7 +424,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           await storage.clearSkips(room.id, room.currentPlayerId);
           
-          // Move to next player
+          // Move to next player or end auction
           const queue = await storage.getPlayerQueue(room.id);
           const nextPlayer = queue.find(q => q.status === 'queued');
           
@@ -549,15 +527,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (lastBid) {
         // SOLD - award to highest bidder
-        const team = await storage.updateRoomTeam(room.id, lastBid.teamCode, {
-          purseLeft: (await storage.getRoomTeams(room.id)).find(t => t.teamCode === lastBid.teamCode)!.purseLeft - lastBid.amount,
-          totalCount: (await storage.getRoomTeams(room.id)).find(t => t.teamCode === lastBid.teamCode)!.totalCount + 1,
-          overseasCount: currentPlayer.nationality !== 'India' 
-            ? (await storage.getRoomTeams(room.id)).find(t => t.teamCode === lastBid.teamCode)!.overseasCount + 1
-            : (await storage.getRoomTeams(room.id)).find(t => t.teamCode === lastBid.teamCode)!.overseasCount,
-        });
+        const teams = await storage.getRoomTeams(room.id);
+        const winningTeam = teams.find(t => t.teamCode === lastBid.teamCode);
+        
+        if (winningTeam) {
+          await storage.updateRoomTeam(room.id, lastBid.teamCode, {
+            purseLeft: winningTeam.purseLeft - lastBid.amount,
+            totalCount: winningTeam.totalCount + 1,
+            overseasCount: currentPlayer.nationality !== 'India' 
+              ? winningTeam.overseasCount + 1
+              : winningTeam.overseasCount,
+          });
 
-        await storage.addSquadPlayer(room.id, lastBid.teamCode, room.currentPlayerId, lastBid.amount);
+          await storage.addSquadPlayer(room.id, lastBid.teamCode as TeamCode, room.currentPlayerId, lastBid.amount);
+        }
+        
         await storage.updatePlayerQueue(room.id, room.currentPlayerId, { status: 'sold', isAuctioning: false });
       } else {
         // UNSOLD
@@ -567,7 +551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Clear skips
       await storage.clearSkips(room.id, room.currentPlayerId);
 
-      // Move to next player
+      // Move to next player or end auction
       const queue = await storage.getPlayerQueue(room.id);
       const nextPlayer = queue.find(q => q.status === 'queued');
       
@@ -598,6 +582,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Force next turn (host only)
+  app.post("/api/rooms/:code/force-next", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const room = await storage.getRoomByCode(req.params.code.toUpperCase());
+      
+      if (!room) {
+        return res.status(404).json({ message: "Room not found" });
+      }
+
+      if (room.hostUserId !== userId) {
+        return res.status(403).json({ message: "Only host can force next turn" });
+      }
+
+      if (room.status === ROOM_STATUS.TEAM_SELECTION) {
+        // Force next team selection
+        const teams = await storage.getRoomTeams(room.id);
+        const members = await storage.getRoomMembers(room.id);
+        const teamMembers = members.filter(m => m.role === 'team' || m.role === 'host');
+        
+        if (teams.length < teamMembers.length) {
+          // Skip current player's turn by marking them as having selected a random available team
+          const availableTeams = IPL_TEAMS.filter(code => !teams.some(t => t.teamCode === code));
+          if (availableTeams.length > 0) {
+            const currentMember = teamMembers.find(m => m.selectionOrder === teams.length + 1);
+            if (currentMember) {
+              await storage.addRoomTeam({
+                roomId: room.id,
+                teamCode: availableTeams[0],
+                userId: currentMember.userId,
+                username: currentMember.username,
+                selectionOrder: currentMember.selectionOrder!,
+                purseLeft: STARTING_PURSE_L,
+                totalCount: 0,
+                overseasCount: 0,
+                hasEnded: false,
+              });
+            }
+          }
+        }
+      } else if (room.status === ROOM_STATUS.LIVE && room.currentDeadlineAt) {
+        // Force finalize current player
+        await storage.updateRoom(room.id, { 
+          currentDeadlineAt: new Date(Date.now() - 1000) // Set deadline to past
+        });
+      }
+
+      res.json({ message: "Forced next turn" });
+    } catch (error) {
+      console.error('Error forcing next turn:', error);
+      res.status(500).json({ message: "Failed to force next turn" });
+    }
+  });
+
   // Get summary
   app.get("/api/rooms/:code/summary", async (req, res) => {
     try {
@@ -610,7 +648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allPlayers = await storage.getAllPlayers();
       
       const teamSummaries = await Promise.all(teams.map(async (team) => {
-        const squadPlayers = await storage.getSquadPlayers(room.id, team.teamCode);
+        const squadPlayers = await storage.getSquadPlayers(room.id, team.teamCode as TeamCode);
         const playersWithDetails = squadPlayers.map(sp => ({
           ...sp,
           player: allPlayers.find(p => p.id === sp.playerId)!
