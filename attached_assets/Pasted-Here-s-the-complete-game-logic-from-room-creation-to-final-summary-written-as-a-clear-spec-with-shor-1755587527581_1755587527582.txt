@@ -1,0 +1,280 @@
+Here’s the complete game logic—from room creation to final summary—written as a clear spec with short pseudocode so Cursor (and you) can implement it exactly.
+
+0) Constants & Units
+
+IPL_TEAMS = ['CSK','MI','RCB','KKR','SRH','RR','DC','PBKS','LSG','GT']
+
+Money unit = Lakhs (L).
+₹100 Crore = 10,000 L → STARTING_PURSE_L = 10000
+
+Team size: TEAM_MIN = 15, TEAM_MAX = 20
+
+Room statuses: lobby → team_selection → live → ended
+
+1) Roles, Room, Join Order
+
+First user = host (room owner).
+
+Others join with room code → they become players (role: team) or spectators.
+
+Join order is recorded: host first, then players by arrival time.
+
+If only 2 or 3 players joined → auction runs with only those 2 or 3 teams.
+
+Data you keep:
+
+room: { code, status, rules, current_player_id, current_deadline_at, version }
+room_members: { user_id, role, joined_at, selection_order, team_code?, has_ended }
+room_teams: { team_code, user_id, selection_order, purse_left, total_count, overseas_count }
+
+2) Team Selection (unique IPL teams, by join order)
+
+When ≥ 2 players joined, host starts team_selection:
+
+Determine turn order: host is 1, others by joined_at.
+
+On a player’s turn:
+
+They must pick one unique team from IPL_TEAMS not yet taken.
+
+Persist to room_teams (team ↔ user ↔ selection_order).
+
+After all joined players have picked (or host completes early with ≥2 picks), host presses Start Auction:
+
+Set room.status='live'
+
+Initialize first lot (next section)
+
+Pseudocode:
+
+startTeamSelection(room):
+  require room.status == 'lobby' and members.count(team-role) >= 2
+  room.status = 'team_selection'
+  assign selection_order: host=1, others by joined_at
+
+selectTeam(room, user, team_code):
+  require room.status == 'team_selection' and user.turnNow
+  require team_code in IPL_TEAMS and not already taken
+  insert room_team(room_id, team_code, user_id, selection_order=user.selection_order)
+  advanceTurnToNextUnpicked()
+
+completeTeamSelection(room, host):
+  require at least 2 teams picked
+  room.status = 'live'
+  introNextPlayer(room)
+
+3) Auction Loop (per player/lot)
+
+The auction proceeds player by player from a queue.
+
+3.1 On “Player Intro”
+
+room.current_player_id = player_id
+
+lastBid = null
+
+clear skips for this (room, player)
+
+Compute deadline_at = now + rules.countdown_seconds → set room.current_deadline_at
+
+Broadcast playerIntro(player, deadline_at)
+
+3.2 “Active Team” definition (very important)
+
+A team is active for the current player if all:
+
+has_ended == false
+
+total_count < TEAM_MAX
+
+purse_left >= minPossibleNextBid(current_player)
+(if lastBid == null → minPossibleNextBid = max(base_price, min_increment_for(base_price));
+else minPossibleNextBid = lastBid.amount + min_increment_for(lastBid.amount))
+
+Teams that are not active show “Bid ended” (cannot participate in this lot).
+
+Helper:
+
+isActive(team, current_player, lastBid):
+  if team.has_ended or team.total_count >= TEAM_MAX:
+    return false
+  nextMin = (lastBid ? lastBid.amount + incFor(lastBid.amount)
+                     : max(current_player.base_price, incFor(current_player.base_price)))
+  return team.purse_left >= nextMin
+
+4) Bidding
+
+Client sends placeBid(amount, version).
+
+Server-side validation (all must pass):
+
+room.status == 'live' and room.current_player_id matches
+
+Team is active (per above)
+
+Increment: amount == (lastBid ? lastBid.amount + incFor(lastBid.amount) : max(base_price, incFor(base_price)))
+
+Optimistic concurrency: client.version == room.version
+
+Still before deadline: now < current_deadline_at
+
+On success:
+
+insert bid
+
+room.version += 1
+
+lastBid = {team_code, amount}
+
+Extend deadline: current_deadline_at = now + rules.countdown_seconds
+
+Broadcast bidUpdated(amount, team_code, version)
+
+Pseudocode:
+
+placeBid(room, team, amount, clientVersion):
+  require room.status == 'live' and now < room.current_deadline_at
+  require clientVersion == room.version
+  require isActive(team, current_player, lastBid)
+  require amount == expectedNextAmount(lastBid, base_price)
+  insert(bids); room.version++
+  lastBid = {team, amount}
+  room.current_deadline_at = now + countdown
+  broadcast(bidUpdated)
+
+5) Skip Logic (per team, per lot)
+
+Any active team may press Skip for the current player.
+
+Record: skips(room_id, player_id, team_code).
+
+Skip-all rule: If all active teams have a skip row for this player and lastBid == null, the player is UNSOLD immediately and the auction auto-advances to the next player (no need to wait for the timer).
+
+Pseudocode:
+
+skipCurrent(room, team):
+  if not isActive(team): return
+  upsert skip(room, current_player, team)
+  if lastBid == null and skippedByAllActiveTeams(room, current_player):
+    unsoldAndAdvance(room)  // immediate
+
+
+skippedByAllActiveTeams checks:
+
+activeTeams = all teams satisfying isActive(...)
+skippers = set of team_code in skips(room, current_player)
+return activeTeams ⊆ skippers
+
+6) Finalize (award or unsold) — exactly-once
+
+Triggered when deadline expires (or via a button that calls the same server routine). Must be atomic (single winner, no double-finalize).
+
+Rules:
+
+If lastBid != null → SOLD to lastBid.team:
+
+team.purse_left -= lastBid.amount
+
+team.total_count += 1
+
+If player.nationality != 'India' → team.overseas_count += 1
+
+insert squad_player(room, team, player, price)
+
+Mark queue row sold
+
+If lastBid == null → UNSOLD
+
+Mark queue row unsold
+
+After either branch:
+
+clear skips(room, player) for cleanliness
+
+Advance to next queued player:
+
+If exists → set current_player_id, current_deadline_at = now + countdown, mark as auctioning, broadcast playerIntro
+
+Else → check end condition (see §8)
+
+Pseudocode:
+
+finalizeOrUnsold(room):
+  acquireTransactionLock(room.code)  // e.g., advisory lock
+  if now < room.current_deadline_at:
+    return {status:'not_expired'}
+
+  if lastBid != null:
+    award(lastBid.team, current_player, lastBid.amount)
+  else:
+    markUnsold(current_player)
+
+  clearSkips(room, current_player)
+  if nextQueuedPlayerExists():
+    introNextPlayer(room)  // sets new deadline & broadcasts
+  else:
+    tryEndRoom(room)
+
+7) “End My Bidding” (per team)
+
+A player can end their own bidding only if they already have ≥ 15 players.
+
+Effects:
+
+Set team.has_ended = true → team becomes inactive forever.
+
+UI shows “Bid ended” on their tile.
+
+If all teams have has_ended = true, the room ends (go to Summary).
+
+Pseudocode:
+
+endMyBidding(room, team):
+  require team.total_count >= TEAM_MIN
+  team.has_ended = true
+  broadcast(teamEnded(team))
+  tryEndRoom(room)  // if all ended or no queue, end
+
+8) End Condition & Summary
+
+The room ends (status='ended') when:
+
+All selected teams have has_ended = true, or
+
+No more players remain in the queue
+
+On end:
+
+Broadcast auctionEnded
+
+Redirect all clients to /r/[code]/summary:
+
+Each team card: roster table (Name, Role, Price), totals, purse left, player & overseas counts
+
+Optional CSV export(s)
+
+Pseudocode:
+
+tryEndRoom(room):
+  if allTeams.has_ended == true or queueEmpty():
+    room.status = 'ended'
+    broadcast(auctionEnded)
+
+9) Special Cases & Clarifications
+
+2 or 3 players total: The logic naturally limits the auction to only those 2–3 selected teams (others don’t exist in room_teams).
+The Skip-all rule becomes: “if both (or all three) active teams skip and no bid → UNSOLD immediately.”
+
+Purse exhausted / can’t reach next minimum: that team is inactive for the lot (shows “Bid ended” for this lot) but can still bid on other lots where the next minimum is affordable—unless they clicked End My Bidding or hit TEAM_MAX.
+
+Exactly equal to next minimum is allowed.
+
+Optimistic concurrency (room.version): prevent stale bid overwrites.
+
+Recovery: If a user disconnects, they rejoin and fetch current room & lot state; state is server-authoritative.
+
+10) Utility Rules
+
+incFor(amount) returns the minimum increment tier based on current amount (you can keep this configurable).
+
+minPossibleNextBid(current) uses base_price when no last bid else lastBid + incFor(lastBid).
