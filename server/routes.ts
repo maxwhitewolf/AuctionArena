@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertRoomSchema, insertRoomMemberSchema, insertRoomTeamSchema, IPL_TEAMS, ROOM_STATUS, STARTING_PURSE_L, TEAM_MAX, TEAM_MIN, type TeamCode, getMinIncrement, expectedNextAmount, isTeamActive } from "@shared/schema";
+import { insertRoomSchema, insertRoomMemberSchema, insertRoomTeamSchema, IPL_TEAMS, ROOM_STATUS, STARTING_PURSE_L, TEAM_MAX, TEAM_MIN, type TeamCode, nextIncrement, expectedNextBid, isTeamActive, canAwardToTeam } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -41,10 +41,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Join room
+  // Join room (supports spectators and rejoin by userId)
   app.post("/api/rooms/join", async (req, res) => {
     try {
-      const { roomCode, username } = req.body;
+      const { roomCode, username, role = 'team', userId: providedUserId } = req.body as { roomCode: string; username: string; role?: 'team' | 'spectator'; userId?: string };
       
       if (!roomCode || !username) {
         return res.status(400).json({ message: "Room code and username are required" });
@@ -61,20 +61,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existingMembers = await storage.getRoomMembers(room.id);
       const teamMembers = existingMembers.filter(m => m.role === 'team' || m.role === 'host');
+
+      // Rejoin flow: if providedUserId matches existing member, return existing identity
+      if (providedUserId) {
+        const existing = existingMembers.find(m => m.userId === providedUserId);
+        if (existing) {
+          return res.json({ room, userId: existing.userId, member: existing });
+        }
+      }
       
-      // Enforce max 10 players
-      if (teamMembers.length >= 10) {
-        return res.status(400).json({ message: "Room is full (maximum 10 players)" });
+      // Enforce max 10 players for team role only
+      if (role !== 'spectator' && teamMembers.length >= 10) {
+        return res.status(400).json({ message: "ROOM_FULL" });
       }
 
-      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const userId = providedUserId ?? `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const member = await storage.addRoomMember({
         roomId: room.id,
         userId,
         username,
-        role: 'team',
-        selectionOrder: existingMembers.length + 1,
+        role: role === 'spectator' ? 'spectator' : 'team',
+        selectionOrder: role === 'spectator' ? null : (teamMembers.length + 1),
         hasEnded: false,
       });
 
@@ -142,7 +150,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Select team
+  // Select team (turn-based; one team per player)
   app.post("/api/rooms/:code/select-team", async (req, res) => {
     try {
       const { userId, teamCode } = req.body;
@@ -176,6 +184,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "User already selected a team" });
       }
 
+      // Enforce turn-taking: find first member (by selectionOrder) who hasn't picked yet
+      const pickedUserIds = new Set(existingTeams.map(t => t.userId));
+      const teamSelectingMembers = members
+        .filter(m => m.role === 'host' || m.role === 'team')
+        .sort((a,b) => (a.selectionOrder ?? 0) - (b.selectionOrder ?? 0));
+      const expectedMember = teamSelectingMembers.find(m => !pickedUserIds.has(m.userId));
+      if (!expectedMember || expectedMember.userId !== userId) {
+        return res.status(400).json({ message: "Not your turn" });
+      }
+
       const team = await storage.addRoomTeam({
         roomId: room.id,
         teamCode,
@@ -192,6 +210,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error selecting team:', error);
       res.status(500).json({ message: "Failed to select team" });
+    }
+  });
+
+  // Complete team selection (host only)
+  app.post("/api/rooms/:code/complete-team-selection", async (req, res) => {
+    try {
+      const { userId } = req.body as { userId: string };
+      const room = await storage.getRoomByCode(req.params.code.toUpperCase());
+      if (!room) {
+        return res.status(404).json({ message: "Room not found" });
+      }
+      if (room.hostUserId !== userId) {
+        return res.status(403).json({ message: "Only host can complete team selection" });
+      }
+      if (room.status !== ROOM_STATUS.TEAM_SELECTION) {
+        return res.status(400).json({ message: "Room is not in team selection state" });
+      }
+      const teams = await storage.getRoomTeams(room.id);
+      if (teams.length < 2) {
+        return res.status(400).json({ message: "Need at least 2 teams to start auction" });
+      }
+
+      // Initialize player queue and go live
+      await storage.initializePlayerQueue(room.id);
+      const queue = await storage.getPlayerQueue(room.id);
+      const firstPlayer = queue[0];
+      if (firstPlayer) {
+        await storage.updatePlayerQueue(room.id, firstPlayer.playerId, {
+          isAuctioning: true,
+          status: 'auctioning',
+        });
+        const deadline = new Date(Date.now() + room.countdownSeconds * 1000);
+        await storage.updateRoom(room.id, {
+          status: ROOM_STATUS.LIVE,
+          currentPlayerId: firstPlayer.playerId,
+          currentDeadlineAt: deadline,
+        });
+      }
+      res.json({ message: "Team selection completed" });
+    } catch (error) {
+      console.error('Error completing team selection:', error);
+      res.status(500).json({ message: "Failed to complete team selection" });
     }
   });
 
@@ -247,6 +307,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Pause auction (host only)
+  app.post("/api/rooms/:code/pause-auction", async (req, res) => {
+    try {
+      const { userId } = req.body as { userId: string };
+      const room = await storage.getRoomByCode(req.params.code.toUpperCase());
+      if (!room) return res.status(404).json({ message: "Room not found" });
+      if (room.hostUserId !== userId) return res.status(403).json({ message: "Only host can pause" });
+      if (room.status !== ROOM_STATUS.LIVE) return res.status(400).json({ message: "Auction is not live" });
+      await storage.updateRoom(room.id, { status: ROOM_STATUS.PAUSED });
+      res.json({ message: "Auction paused" });
+    } catch (error) {
+      console.error('Error pausing auction:', error);
+      res.status(500).json({ message: "Failed to pause auction" });
+    }
+  });
+
+  // Resume auction (host only)
+  app.post("/api/rooms/:code/resume-auction", async (req, res) => {
+    try {
+      const { userId } = req.body as { userId: string };
+      const room = await storage.getRoomByCode(req.params.code.toUpperCase());
+      if (!room) return res.status(404).json({ message: "Room not found" });
+      if (room.hostUserId !== userId) return res.status(403).json({ message: "Only host can resume" });
+      if (room.status !== ROOM_STATUS.PAUSED) return res.status(400).json({ message: "Auction is not paused" });
+      // extend deadline a bit to avoid instant finalize
+      const deadline = new Date(Date.now() + room.countdownSeconds * 1000);
+      await storage.updateRoom(room.id, { status: ROOM_STATUS.LIVE, currentDeadlineAt: deadline });
+      res.json({ message: "Auction resumed" });
+    } catch (error) {
+      console.error('Error resuming auction:', error);
+      res.status(500).json({ message: "Failed to resume auction" });
+    }
+  });
+
   // Get auction state
   app.get("/api/rooms/:code/auction", async (req, res) => {
     try {
@@ -272,7 +366,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       let nextMinBid = undefined;
       if (currentPlayer) {
-        nextMinBid = expectedNextAmount(lastBid, currentPlayer.basePrice);
+        const lastBidL = lastBid ? lastBid.amount : null;
+        nextMinBid = expectedNextBid(currentPlayer.basePrice, lastBidL);
       }
 
       res.json({
@@ -337,12 +432,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Team is not active for bidding" });
       }
 
-      const expectedAmount = expectedNextAmount(lastBid, currentPlayer.basePrice);
+      // Disallow bidding against yourself
+      if (lastBid && lastBid.teamCode === userTeam.teamCode) {
+        return res.status(400).json({ message: "Already highest bidder" });
+      }
 
-      if (amount !== expectedAmount) {
-        return res.status(400).json({ 
-          message: `Invalid bid amount. Expected: ${expectedAmount}L` 
-        });
+      const lastBidL = lastBid ? lastBid.amount : null;
+      const expectedAmount = expectedNextBid(currentPlayer.basePrice, lastBidL);
+      if (lastBid == null) {
+        if (amount < expectedAmount) {
+          return res.status(400).json({ message: `Invalid bid amount. Minimum: ${expectedAmount}L` });
+        }
+        // additionally ensure first bid aligns to step
+        const step = nextIncrement(currentPlayer.basePrice);
+        if (amount % step !== 0) {
+          return res.status(400).json({ message: `First bid must align to ${step}L steps` });
+        }
+      } else if (amount !== expectedAmount) {
+        return res.status(400).json({ message: `Invalid bid amount. Expected: ${expectedAmount}L` });
       }
 
       if (userTeam.purseLeft < amount) {
@@ -406,7 +513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const skip = await storage.addSkip(room.id, room.currentPlayerId, userTeam.teamCode as TeamCode);
 
-      // Check if all active teams have skipped and no bid exists
+      // Check if all active teams have skipped
       if (!lastBid) {
         // Check if all active teams have skipped
         const allActiveTeams = teams.filter(team => isTeamActive(team, currentPlayer, lastBid));
@@ -446,6 +553,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
               currentPlayerId: null,
               currentDeadlineAt: null,
             });
+          }
+        }
+      } else {
+        // There is a last bid. If all other active teams have skipped, award immediately
+        const allActiveTeams = teams.filter(team => isTeamActive(team, currentPlayer, lastBid));
+        const skips = await storage.getSkips(room.id, room.currentPlayerId);
+        const skippedTeamCodes = new Set(skips.map(s => s.teamCode));
+        const othersActive = allActiveTeams.filter(t => t.teamCode !== lastBid.teamCode);
+        const allOthersSkipped = othersActive.every(team => skippedTeamCodes.has(team.teamCode));
+
+        if (allOthersSkipped) {
+          const winningTeam = teams.find(t => t.teamCode === lastBid.teamCode);
+          if (winningTeam && canAwardToTeam(winningTeam, lastBid.amount, currentPlayer.nationality !== 'India')) {
+            await storage.updateRoomTeam(room.id, lastBid.teamCode, {
+              purseLeft: winningTeam.purseLeft - lastBid.amount,
+              totalCount: winningTeam.totalCount + 1,
+              overseasCount: currentPlayer.nationality !== 'India' ? winningTeam.overseasCount + 1 : winningTeam.overseasCount,
+            });
+            await storage.addSquadPlayer(room.id, lastBid.teamCode as TeamCode, room.currentPlayerId, lastBid.amount);
+            await storage.updatePlayerQueue(room.id, room.currentPlayerId, { status: 'sold', isAuctioning: false });
+          } else {
+            await storage.updatePlayerQueue(room.id, room.currentPlayerId, { status: 'unsold', isAuctioning: false });
+          }
+
+          await storage.clearSkips(room.id, room.currentPlayerId);
+
+          // Advance immediately
+          const queue = await storage.getPlayerQueue(room.id);
+          const nextPlayer = queue.find(q => q.status === 'queued');
+          if (nextPlayer) {
+            await storage.updatePlayerQueue(room.id, nextPlayer.playerId, { isAuctioning: true, status: 'auctioning' });
+            const deadline = new Date(Date.now() + room.countdownSeconds * 1000);
+            await storage.updateRoom(room.id, { currentPlayerId: nextPlayer.playerId, currentDeadlineAt: deadline });
+          } else {
+            await storage.updateRoom(room.id, { status: ROOM_STATUS.ENDED, currentPlayerId: null, currentDeadlineAt: null });
           }
         }
       }
@@ -529,17 +671,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // SOLD - award to highest bidder
         const teams = await storage.getRoomTeams(room.id);
         const winningTeam = teams.find(t => t.teamCode === lastBid.teamCode);
-        
-        if (winningTeam) {
+        if (winningTeam && canAwardToTeam(winningTeam, lastBid.amount, currentPlayer.nationality !== 'India')) {
           await storage.updateRoomTeam(room.id, lastBid.teamCode, {
             purseLeft: winningTeam.purseLeft - lastBid.amount,
             totalCount: winningTeam.totalCount + 1,
-            overseasCount: currentPlayer.nationality !== 'India' 
-              ? winningTeam.overseasCount + 1
-              : winningTeam.overseasCount,
+            overseasCount: currentPlayer.nationality !== 'India' ? winningTeam.overseasCount + 1 : winningTeam.overseasCount,
           });
-
           await storage.addSquadPlayer(room.id, lastBid.teamCode as TeamCode, room.currentPlayerId, lastBid.amount);
+        } else {
+          // If cannot award due to constraints, mark unsold
+          await storage.updatePlayerQueue(room.id, room.currentPlayerId, { status: 'unsold', isAuctioning: false });
+          await storage.clearSkips(room.id, room.currentPlayerId);
+          const queue = await storage.getPlayerQueue(room.id);
+          const nextPlayer = queue.find(q => q.status === 'queued');
+          if (nextPlayer) {
+            await storage.updatePlayerQueue(room.id, nextPlayer.playerId, { isAuctioning: true, status: 'auctioning' });
+            const deadline = new Date(Date.now() + room.countdownSeconds * 1000);
+            await storage.updateRoom(room.id, { currentPlayerId: nextPlayer.playerId, currentDeadlineAt: deadline });
+          } else {
+            await storage.updateRoom(room.id, { status: ROOM_STATUS.ENDED, currentPlayerId: null, currentDeadlineAt: null });
+          }
+          return res.json({ message: "Player unsold" });
         }
         
         await storage.updatePlayerQueue(room.id, room.currentPlayerId, { status: 'sold', isAuctioning: false });

@@ -1,6 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { TEAM_COLORS } from "@/lib/team-colors";
 import type { RoomTeam, Player } from "@shared/schema";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { getInitials, stringToHslColor } from "@/lib/utils";
 
 interface TeamCardProps {
   team: RoomTeam;
@@ -24,6 +26,11 @@ export function TeamCard({ team, isUserTeam, currentPlayer }: TeamCardProps) {
           >
             {team.teamCode}
           </div>
+          <Avatar>
+            <AvatarFallback style={{ background: stringToHslColor(team.username) }} className="text-white">
+              {getInitials(team.username)}
+            </AvatarFallback>
+          </Avatar>
           <span className="font-semibold text-gray-900">
             {isUserTeam ? 'Your Team' : team.username}
           </span>

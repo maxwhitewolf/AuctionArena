@@ -10,6 +10,8 @@ import { IPL_TEAMS } from "@/lib/constants";
 import { TEAM_COLORS } from "@/lib/team-colors";
 import { useEffect } from "react";
 import type { RoomWithMembers } from "@shared/schema";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { getInitials, stringToHslColor } from "@/lib/utils";
 
 export default function TeamSelection() {
   const { code } = useParams();
@@ -112,9 +114,11 @@ export default function TeamSelection() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-green-500 rounded-full flex items-center justify-center">
-                <i className="fas fa-cricket-ball text-white text-lg"></i>
-              </div>
+              <Avatar>
+                <AvatarFallback style={{ background: stringToHslColor(room.name) }} className="text-white">
+                  {getInitials(room.name)}
+                </AvatarFallback>
+              </Avatar>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">{room.name}</h1>
                 <p className="text-sm text-gray-600">Team Selection</p>
@@ -168,6 +172,11 @@ export default function TeamSelection() {
                           : 'bg-gray-50 border-gray-300'
                       }`}
                     >
+                      <Avatar>
+                        <AvatarFallback style={{ background: stringToHslColor(member.username) }} className="text-white">
+                          {getInitials(member.username)}
+                        </AvatarFallback>
+                      </Avatar>
                       <div className={`w-2 h-2 rounded-full ${
                         hasSelected
                           ? 'bg-green-500'

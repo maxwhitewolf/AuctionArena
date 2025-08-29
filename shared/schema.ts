@@ -7,6 +7,7 @@ import { z } from "zod";
 export const ROOM_STATUS = {
   LOBBY: 'lobby',
   TEAM_SELECTION: 'team_selection', 
+  PAUSED: 'paused',
   LIVE: 'live',
   ENDED: 'ended'
 } as const;
@@ -25,7 +26,7 @@ export type PlayerRole = typeof PLAYER_ROLES[number];
 export const STARTING_PURSE_L = 10000; // 100 Crore = 10,000 Lakhs
 export const TEAM_MIN = 15;
 export const TEAM_MAX = 20;
-export const MAX_OVERSEAS = 8;
+export const MAX_OVERSEAS = 5;
 
 // Rooms table
 export const rooms = pgTable("rooms", {
@@ -47,7 +48,7 @@ export const roomMembers = pgTable("room_members", {
   roomId: varchar("room_id").notNull(),
   userId: varchar("user_id").notNull(),
   username: text("username").notNull(),
-  role: varchar("role").notNull().default('team'), // 'host', 'team'
+  role: varchar("role").notNull().default('team'), // 'host', 'team', 'spectator'
   joinedAt: timestamp("joined_at").notNull().default(sql`now()`),
   selectionOrder: integer("selection_order"),
   hasEnded: boolean("has_ended").notNull().default(false),
@@ -74,6 +75,7 @@ export const players = pgTable("players", {
   role: text("role").notNull(),
   nationality: text("nationality").notNull(),
   basePrice: integer("base_price").notNull(), // in Lakhs
+  imageUrl: text("image_url"),
   stats: jsonb("stats"), // flexible stats object
 });
 
@@ -164,6 +166,7 @@ export type PlayerQueue = typeof playerQueue.$inferSelect;
 
 // API response types
 export type RoomWithMembers = Room & {
+  room: Room;
   members: RoomMember[];
   teams: RoomTeam[];
   currentPlayer?: Player;
@@ -185,20 +188,25 @@ export type TeamSummary = RoomTeam & {
 };
 
 // Helper function for minimum increments
-export function getMinIncrement(amount: number): number {
-  if (amount < 5000) return 500; // 5L increment below 50Cr  
-  if (amount < 10000) return 1000; // 10L increment 50Cr-100Cr
-  if (amount < 50000) return 2500; // 25L increment 100Cr-500Cr
-  if (amount < 100000) return 5000; // 50L increment 500Cr-1000Cr
-  return 10000; // 100L increment above 1000Cr
+// Money in Lakhs (L). 1 Cr = 100 L
+export function nextIncrement(amountL: number): number {
+  if (amountL < 100) return 10; // < ₹1 Cr
+  if (amountL < 200) return 20; // ₹1–2 Cr
+  return 25; // ≥ ₹2 Cr (includes >₹3 Cr)
+}
+
+export function alignToStep(amountL: number, stepL: number): number {
+  return Math.ceil(amountL / stepL) * stepL;
 }
 
 // Expected next amount calculation
-export function expectedNextAmount(lastBid: Bid | null | undefined, basePrice: number): number {
-  if (!lastBid) {
-    return Math.max(basePrice, getMinIncrement(basePrice));
+export function expectedNextBid(baseL: number, lastBidL: number | null | undefined): number {
+  if (lastBidL == null) {
+    const step = nextIncrement(baseL);
+    return Math.max(baseL, alignToStep(baseL, step));
   }
-  return lastBid.amount + getMinIncrement(lastBid.amount);
+  const step = nextIncrement(lastBidL);
+  return lastBidL + step;
 }
 
 // Check if team is active for current player
@@ -206,7 +214,14 @@ export function isTeamActive(team: RoomTeam, currentPlayer: Player, lastBid: Bid
   if (team.hasEnded || team.totalCount >= TEAM_MAX) {
     return false;
   }
-  
-  const nextMinBid = expectedNextAmount(lastBid, currentPlayer.basePrice);
+  const lastBidL = lastBid ? lastBid.amount : null;
+  const nextMinBid = expectedNextBid(currentPlayer.basePrice, lastBidL);
   return team.purseLeft >= nextMinBid;
+}
+
+export function canAwardToTeam(team: RoomTeam, priceL: number, isOverseas: boolean): boolean {
+  if (team.totalCount >= TEAM_MAX) return false;
+  if (team.purseLeft < priceL) return false;
+  if (isOverseas && team.overseasCount >= MAX_OVERSEAS) return false;
+  return true;
 }

@@ -28,8 +28,14 @@ export function PlayerCard({ player, lastBid, nextMinBid }: PlayerCardProps) {
               </Badge>
             </div>
           </div>
-          <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center">
-            <i className="fas fa-user text-4xl"></i>
+          <div className="w-24 h-24 rounded-full overflow-hidden bg-white/10 border border-white/20">
+            {player.imageUrl ? (
+              <img src={player.imageUrl} alt={player.name} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <i className="fas fa-user text-4xl"></i>
+              </div>
+            )}
           </div>
         </div>
       </div>

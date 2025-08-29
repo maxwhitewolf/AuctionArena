@@ -9,6 +9,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useEffect } from "react";
 import type { RoomWithMembers } from "@shared/schema";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { getInitials, stringToHslColor } from "@/lib/utils";
 
 export default function Room() {
   const { code } = useParams();
@@ -103,9 +105,11 @@ export default function Room() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-green-500 rounded-full flex items-center justify-center">
-                <i className="fas fa-cricket-ball text-white text-lg"></i>
-              </div>
+              <Avatar>
+                <AvatarFallback style={{ background: stringToHslColor(room.name) }} className="text-white">
+                  {getInitials(room.name)}
+                </AvatarFallback>
+              </Avatar>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">{room.name}</h1>
                 <p className="text-sm text-gray-600">Room Code: {room.code}</p>
@@ -169,15 +173,15 @@ export default function Room() {
                   }`}
                 >
                   <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${
-                      member.role === 'host' ? 'bg-blue-500' : 'bg-gray-500'
-                    }`}>
-                      {index + 1}
-                    </div>
+                    <Avatar>
+                      <AvatarFallback style={{ background: stringToHslColor(member.username) }} className="text-white">
+                        {getInitials(member.username)}
+                      </AvatarFallback>
+                    </Avatar>
                     <div>
                       <div className="font-medium text-gray-900">{member.username}</div>
                       <div className="text-sm text-gray-600">
-                        {member.role === 'host' ? 'Host' : 'Player'}
+                        {member.role === 'host' ? 'Host' : member.role === 'spectator' ? 'Spectator' : 'Player'}
                       </div>
                     </div>
                   </div>

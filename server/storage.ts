@@ -1,5 +1,7 @@
 import { type Room, type InsertRoom, type RoomMember, type InsertRoomMember, type RoomTeam, type InsertRoomTeam, type Player, type InsertPlayer, type Bid, type InsertBid, type Skip, type SquadPlayer, type PlayerQueue, IPL_TEAMS, PLAYER_ROLES, STARTING_PURSE_L, ROOM_STATUS, type PlayerRole, type TeamCode } from "@shared/schema";
 import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
 
 export interface IStorage {
   // Room operations
@@ -56,47 +58,30 @@ export class MemStorage implements IStorage {
   }
 
   private initializePlayers() {
-    // Sample IPL players data
-    const playersData: Array<{ name: string; role: PlayerRole; nationality: string; basePrice: number }> = [
-      { name: "Virat Kohli", role: "Batsman", nationality: "India", basePrice: 200 },
-      { name: "MS Dhoni", role: "Wicket-Keeper", nationality: "India", basePrice: 200 },
-      { name: "Rohit Sharma", role: "Batsman", nationality: "India", basePrice: 200 },
-      { name: "Jasprit Bumrah", role: "Bowler", nationality: "India", basePrice: 200 },
-      { name: "Ravindra Jadeja", role: "All-Rounder", nationality: "India", basePrice: 200 },
-      { name: "KL Rahul", role: "Wicket-Keeper", nationality: "India", basePrice: 200 },
-      { name: "Hardik Pandya", role: "All-Rounder", nationality: "India", basePrice: 200 },
-      { name: "Shikhar Dhawan", role: "Batsman", nationality: "India", basePrice: 200 },
-      { name: "Yuzvendra Chahal", role: "Bowler", nationality: "India", basePrice: 100 },
-      { name: "David Warner", role: "Batsman", nationality: "Australia", basePrice: 200 },
-      { name: "Kane Williamson", role: "Batsman", nationality: "New Zealand", basePrice: 200 },
-      { name: "Jos Buttler", role: "Wicket-Keeper", nationality: "England", basePrice: 200 },
-      { name: "Andre Russell", role: "All-Rounder", nationality: "West Indies", basePrice: 200 },
-      { name: "Rashid Khan", role: "Bowler", nationality: "Afghanistan", basePrice: 200 },
-      { name: "Kagiso Rabada", role: "Bowler", nationality: "South Africa", basePrice: 200 },
-      { name: "Pat Cummins", role: "Bowler", nationality: "Australia", basePrice: 200 },
-      { name: "Glenn Maxwell", role: "All-Rounder", nationality: "Australia", basePrice: 200 },
-      { name: "Faf du Plessis", role: "Batsman", nationality: "South Africa", basePrice: 150 },
-      { name: "Sunil Narine", role: "All-Rounder", nationality: "West Indies", basePrice: 100 },
-      { name: "Trent Boult", role: "Bowler", nationality: "New Zealand", basePrice: 150 },
-      { name: "Shubman Gill", role: "Batsman", nationality: "India", basePrice: 100 },
-      { name: "Rishabh Pant", role: "Wicket-Keeper", nationality: "India", basePrice: 200 },
-      { name: "Ruturaj Gaikwad", role: "Batsman", nationality: "India", basePrice: 100 },
-      { name: "Prithvi Shaw", role: "Batsman", nationality: "India", basePrice: 75 },
-      { name: "Ishan Kishan", role: "Wicket-Keeper", nationality: "India", basePrice: 100 },
-    ];
-
-    playersData.forEach(playerData => {
-      const id = randomUUID();
-      const player: Player = {
-        id,
-        ...playerData,
-        stats: null,
-      };
-      this.players.set(id, player);
-    });
+    try {
+      // Load real dataset from assets/data.json
+      const dataPath = path.resolve(process.cwd(), 'assets', 'data.json');
+      const raw = fs.readFileSync(dataPath, 'utf-8');
+      const json = JSON.parse(raw) as { players: Array<{ player_no: number; player_name: string; rating: number; base_price: number; player_role: string; path_of_image: string }> };
+      json.players.forEach((p) => {
+        const id = randomUUID();
+        const player: Player = {
+          id,
+          name: p.player_name,
+          role: normalizeRole(p.player_role),
+          nationality: inferNationality(p.player_name),
+          basePrice: p.base_price,
+          stats: { rating: p.rating },
+          imageUrl: `/${p.path_of_image.replace(/\\/g, '/')}`,
+        } as Player;
+        this.players.set(id, player);
+      });
+    } catch (err) {
+      // Fallback to empty dataset if assets missing
+      console.warn('Failed to load assets/data.json, players list will be empty');
+    }
   }
 
-  // Helper method to generate room codes
   private generateRoomCode(): string {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   }
@@ -310,6 +295,22 @@ export class MemStorage implements IStorage {
       })
       .sort((a, b) => a.purchasedAt.getTime() - a.purchasedAt.getTime());
   }
+}
+
+function normalizeRole(role: string): PlayerRole {
+  const r = role.toLowerCase();
+  if (r.includes('wicket')) return 'Wicket-Keeper' as PlayerRole;
+  if (r.includes('all')) return 'All-Rounder' as PlayerRole;
+  if (r.includes('bowl')) return 'Bowler' as PlayerRole;
+  return 'Batsman' as PlayerRole;
+}
+
+function inferNationality(name: string): string {
+  // Best-effort; dataset does not include nationality explicitly
+  // Default to 'India' for common Indian names
+  const nonIndianHints = ['Buttler','Warner','Williamson','Maxwell','de Kock','Joseph','Conway','Bairstow','Narine','Cummins','Finch','Mills','Allen','Tye','Milne','Boult','Abbott','Markram','Livingstone','Nortje','Jordan','Wade','Seifert','Mitchell','Stoinis','Pretorius','Farooqi','Rutherford','Conway','Pollard','Allen'];
+  if (nonIndianHints.some(h => name.toLowerCase().includes(h.toLowerCase()))) return 'Overseas';
+  return 'India';
 }
 
 export const storage = new MemStorage();
