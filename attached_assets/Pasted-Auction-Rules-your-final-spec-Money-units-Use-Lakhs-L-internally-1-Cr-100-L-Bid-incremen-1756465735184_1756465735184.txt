@@ -1,0 +1,128 @@
+Auction Rules (your final spec)
+Money units
+
+Use Lakhs (L) internally. (₹1 Cr = 100 L)
+
+Bid increment slabs (final)
+
+₹20L–₹1Cr (<100 L): +10 L per bid
+
+₹1Cr–₹2Cr (100–199 L): +20 L per bid
+
+₹2Cr and above (≥200 L, including >₹3Cr): +25 L per bid ✅ (your change)
+
+So there is no special +50 L tier. Even above ₹3Cr, increments stay 25 L.
+
+Squad constraints
+
+Minimum 15, Maximum 20 players per squad ✅
+
+Overseas cap: 5 per squad ✅
+
+Purse
+
+Keep your purse as you had it (e.g., ₹100 Cr = 10,000 L), or set what you want.
+
+A team cannot bid if they can’t afford the next minimum for the current lot.
+
+Flow per player (lot)
+
+Intro lot at base price → start single countdown.
+
+Teams may Bid or Skip.
+
+Bid must match the slab:
+
+First bid: ≥ base_price and aligned to the slab step.
+
+Next bids: exactly last_bid + step (step from the last bid amount slab).
+
+Skip-all (no bid) ⇒ UNSOLD immediately (don’t wait timer).
+
+If there is a last bid and all other active teams skip ⇒ award immediately to last bidder.
+
+If the timer expires:
+
+With a last bid ⇒ SOLD to last bidder.
+
+With no bid ⇒ UNSOLD.
+
+After finalize, go to next player.
+
+A team that has 15+ players may End My Bidding (optional rule). Once ended, they cannot bid again.
+
+Active team (for current lot)
+
+A team is active if all are true:
+
+has_ended = false
+
+total_count < 20
+
+purse_left ≥ nextMinBid(current_lot)
+
+If not active → they can’t bid (show “Bid ended” on UI for this lot).
+
+No RTM / No Re-entry
+
+No Right-to-Match and no re-entry of unsold players. ✅
+
+Drop-in logic (functions you can paste)
+// Money in Lakhs (L). 1 Cr = 100 L
+export const nextIncrement = (xL: number): number => {
+  if (xL < 100) return 10;        // < ₹1 Cr
+  if (xL < 200) return 20;        // ₹1–2 Cr
+  return 25;                      // ≥ ₹2 Cr (includes > ₹3 Cr)  ✅ your rule
+};
+
+const alignToStep = (amountL: number, stepL: number) =>
+  Math.ceil(amountL / stepL) * stepL;
+
+export const expectedNextBid = (baseL: number, lastBidL: number | null): number => {
+  if (lastBidL == null) {
+    // first valid bid must be aligned to the slab at base price
+    const step = nextIncrement(baseL);
+    return Math.max(baseL, alignToStep(baseL, step));
+  }
+  const step = nextIncrement(lastBidL);
+  return lastBidL + step;
+};
+
+export const isActiveTeam = (team: {
+  has_ended: boolean;
+  total_count: number;
+  purse_left: number;
+}, baseL: number, lastBidL: number | null): boolean => {
+  if (team.has_ended) return false;
+  if (team.total_count >= 20) return false;          // max 20
+  const need = expectedNextBid(baseL, lastBidL);
+  return team.purse_left >= need;
+};
+
+// Validate squad constraints on finalize (award path)
+export const canAwardToTeam = (team: {
+  total_count: number;
+  overseas_count: number;
+  purse_left: number;
+}, priceL: number, isOverseas: boolean): boolean => {
+  if (team.total_count >= 20) return false;
+  if (team.purse_left < priceL) return false;
+  if (isOverseas && team.overseas_count >= 5) return false;   // max 5 overseas
+  return true;
+};
+
+Event rules (concise)
+
+Skip: record per-lot.
+
+If no bids yet and all active have skipped ⇒ UNSOLD now.
+
+If there is a last bid, and all other active teams have skipped ⇒ award now to last bidder.
+
+(If a team has already bid in this lot, you can forbid them from skipping to avoid griefing.)
+
+Finalize (timer expiry) = exactly-once:
+
+lastBid ? SOLD : UNSOLD, then advance.
+
+End My Bidding (optional): team with ≥15 players can lock themselves; then they’re always inactive.
