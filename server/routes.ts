@@ -788,6 +788,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // End my bidding (for teams with 15+ players)
+  app.post("/api/rooms/:code/end-bidding", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const room = await storage.getRoomByCode(req.params.code.toUpperCase());
+      
+      if (!room) {
+        return res.status(404).json({ message: "Room not found" });
+      }
+
+      const teams = await storage.getRoomTeams(room.id);
+      const userTeam = teams.find(t => t.userId === userId);
+      
+      if (!userTeam) {
+        return res.status(404).json({ message: "User team not found" });
+      }
+
+      if (userTeam.hasEnded) {
+        return res.status(400).json({ message: "Team has already ended bidding" });
+      }
+
+      if (userTeam.totalCount < TEAM_MIN) {
+        return res.status(400).json({ message: `Need at least ${TEAM_MIN} players to end bidding` });
+      }
+
+      await storage.updateRoomTeam(room.id, userTeam.teamCode, {
+        hasEnded: true,
+      });
+
+      res.json({ message: "Bidding ended successfully" });
+    } catch (error) {
+      console.error('Error ending bidding:', error);
+      res.status(500).json({ message: "Failed to end bidding" });
+    }
+  });
+
   // Get summary
   app.get("/api/rooms/:code/summary", async (req, res) => {
     try {

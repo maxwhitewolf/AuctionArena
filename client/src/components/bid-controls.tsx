@@ -7,8 +7,10 @@ interface BidControlsProps {
   currentPlayer: any;
   onBid: (amount: number) => void;
   onSkip: () => void;
+  onEndBidding?: () => void;
   isPlacingBid: boolean;
   isSkipping: boolean;
+  isEndingBidding?: boolean;
 }
 
 export function BidControls({ 
@@ -17,8 +19,10 @@ export function BidControls({
   currentPlayer, 
   onBid, 
   onSkip, 
+  onEndBidding,
   isPlacingBid, 
-  isSkipping 
+  isSkipping,
+  isEndingBidding = false
 }: BidControlsProps) {
   if (!nextMinBid || userTeam.hasEnded) {
     return null;
@@ -27,7 +31,8 @@ export function BidControls({
   // Check if team can afford the next bid
   const canAfford = userTeam.purseLeft >= nextMinBid;
   const teamFull = userTeam.totalCount >= 20;
-  const overseasFull = currentPlayer.nationality !== 'India' && userTeam.overseasCount >= 8;
+  const overseasFull = currentPlayer.nationality !== 'India' && userTeam.overseasCount >= 5;
+  const canEndBidding = userTeam.totalCount >= 15 && !userTeam.hasEnded && onEndBidding;
   
   const canBid = canAfford && !teamFull && !overseasFull && !userTeam.hasEnded;
 
@@ -41,7 +46,7 @@ export function BidControls({
             <p className="text-red-800 text-sm">
               {!canAfford && "Insufficient budget for next bid"}
               {teamFull && "Team is full (20 players)"}
-              {overseasFull && "Overseas player limit reached (8 players)"}
+              {overseasFull && "Overseas player limit reached (5 players)"}
               {userTeam.hasEnded && "You have ended bidding"}
             </p>
           </div>
@@ -79,11 +84,34 @@ export function BidControls({
           </Button>
         </div>
 
+        {canEndBidding && (
+          <div className="mt-4">
+            <Button 
+              onClick={onEndBidding}
+              disabled={isEndingBidding}
+              variant="destructive"
+              className="w-full py-2 px-4 text-sm font-semibold"
+            >
+              {isEndingBidding ? (
+                <>Ending Bidding...</>
+              ) : (
+                <>
+                  <i className="fas fa-stop mr-2"></i>
+                  End My Bidding
+                </>
+              )}
+            </Button>
+            <p className="text-xs text-gray-500 mt-1 text-center">
+              You have {userTeam.totalCount} players (minimum 15 required)
+            </p>
+          </div>
+        )}
+
         <div className="mt-4 text-sm text-gray-600">
           <p>Your Budget: ₹{(userTeam.purseLeft / 100).toFixed(1)} Cr</p>
           <p>Players: {userTeam.totalCount}/20</p>
           {currentPlayer.nationality !== 'India' && (
-            <p>Overseas: {userTeam.overseasCount}/8</p>
+            <p>Overseas: {userTeam.overseasCount}/5</p>
           )}
         </div>
       </CardContent>

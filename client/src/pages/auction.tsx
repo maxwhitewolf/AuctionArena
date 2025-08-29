@@ -191,8 +191,10 @@ export default function Auction() {
                 currentPlayer={currentPlayer}
                 onBid={(amount) => placeBidMutation.mutate(amount)}
                 onSkip={() => skipMutation.mutate()}
+                onEndBidding={() => endBiddingMutation.mutate()}
                 isPlacingBid={placeBidMutation.isPending}
                 isSkipping={skipMutation.isPending}
+                isEndingBidding={endBiddingMutation.isPending}
               />
             )}
 
