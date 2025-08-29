@@ -437,6 +437,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Already highest bidder" });
       }
 
+      // Prevent teams from bidding on their own squad players
+      const squadPlayers = await storage.getSquadPlayers(room.id, userTeam.teamCode as TeamCode);
+      const ownPlayerIds = squadPlayers.map(sp => sp.playerId);
+      if (ownPlayerIds.includes(room.currentPlayerId)) {
+        return res.status(400).json({ message: "Cannot bid on your own players" });
+      }
+
       const lastBidL = lastBid ? lastBid.amount : null;
       const expectedAmount = expectedNextBid(currentPlayer.basePrice, lastBidL);
       if (lastBid == null) {

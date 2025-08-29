@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TEAM_COLORS } from "@/lib/team-colors";
+import { TeamComparisonGrid } from "@/components/team-comparison-grid";
 import type { TeamSummary } from "@shared/schema";
 
 export default function Summary() {
@@ -150,8 +151,11 @@ export default function Summary() {
           })}
         </div>
 
+        {/* Team Comparison Grid */}
+        <TeamComparisonGrid teams={teams} />
+
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mt-8">
           <Button className="bg-gradient-to-r from-green-500 to-green-600 text-white px-8 py-3 hover:from-green-600 hover:to-green-700">
             <i className="fas fa-download mr-2"></i>Export Results
           </Button>
