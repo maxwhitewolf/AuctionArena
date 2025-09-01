@@ -177,7 +177,7 @@ export type AuctionState = {
   currentPlayer?: Player;
   lastBid?: Bid;
   bids: Bid[];
-  teams: RoomTeam[];
+  teams: (RoomTeam & { squadPlayers: (SquadPlayer & { player: Player })[] })[];
   skips: Skip[];
   isActive: boolean;
   nextMinBid?: number;

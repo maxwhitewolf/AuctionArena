@@ -370,6 +370,58 @@ export default function Auction() {
                       ></div>
                     </div>
                   </div>
+
+                  {/* Won Players */}
+                  {userTeam.squadPlayers && userTeam.squadPlayers.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="text-lg font-bold text-white mb-4 flex items-center space-x-2">
+                        <Users className="w-5 h-5 text-amber-400" />
+                        <span>Won Players</span>
+                      </h4>
+                      <div className="space-y-3 max-h-64 overflow-y-auto">
+                        {userTeam.squadPlayers
+                          .sort((a, b) => new Date(b.purchasedAt).getTime() - new Date(a.purchasedAt).getTime()) // Show newest first
+                          .map((squadPlayer) => (
+                            <div 
+                              key={squadPlayer.id}
+                              className="bg-gray-800/40 rounded-xl p-4 border border-gray-700/30 animate-fade-in"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center space-x-2 mb-1">
+                                    <span className="font-bold text-white text-sm">
+                                      {squadPlayer.player.name}
+                                    </span>
+                                    <Badge className="text-xs bg-amber-500/20 border-amber-500/30 text-amber-300">
+                                      {squadPlayer.player.role}
+                                    </Badge>
+                                  </div>
+                                  <div className="text-xs text-gray-400">
+                                    {squadPlayer.player.nationality}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-lg font-bold text-green-400">
+                                    ₹{(squadPlayer.price / 100).toFixed(1)} Cr
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {new Date(squadPlayer.purchasedAt).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {userTeam.squadPlayers && userTeam.squadPlayers.length === 0 && (
+                    <div className="mb-6 p-6 bg-gray-800/20 rounded-xl border border-gray-700/30 text-center">
+                      <Users className="w-8 h-8 text-gray-500 mx-auto mb-3" />
+                      <p className="text-gray-400 text-sm">No players won yet</p>
+                      <p className="text-gray-500 text-xs">Start bidding to build your squad!</p>
+                    </div>
+                  )}
                   
                   {userTeam.totalCount >= 15 && !userTeam.hasEnded && (
                     <Button 

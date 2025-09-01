@@ -370,12 +370,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         nextMinBid = expectedNextBid(currentPlayer.basePrice, lastBidL);
       }
 
+      // Get squad players for all teams with player details
+      const allPlayers = await storage.getAllPlayers();
+      const teamsWithSquads = await Promise.all(teams.map(async (team) => {
+        const squadPlayers = await storage.getSquadPlayers(room.id, team.teamCode as TeamCode);
+        const playersWithDetails = squadPlayers.map(sp => ({
+          ...sp,
+          player: allPlayers.find(p => p.id === sp.playerId)!
+        }));
+        
+        return {
+          ...team,
+          squadPlayers: playersWithDetails
+        };
+      }));
+
       res.json({
         room,
         currentPlayer,
         lastBid,
         bids,
-        teams,
+        teams: teamsWithSquads,
         skips,
         isActive,
         nextMinBid
