@@ -4,7 +4,7 @@ hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["flutter"]
+packages = ["flutter", "android-tools"]
 
 [deployment]
 deploymentTarget = "autoscale"
@@ -13,6 +13,10 @@ run = ["sh", "-c", "npm run dev"]
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
 
 [env]
 PORT = "5000"
