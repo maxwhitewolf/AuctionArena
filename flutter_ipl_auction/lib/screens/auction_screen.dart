@@ -109,7 +109,7 @@ class _AuctionScreenState extends State<AuctionScreen> {
     return const Center(
       child: Card(
         margin: EdgeInsets.all(24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(20))),
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Column(

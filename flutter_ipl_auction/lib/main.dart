@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:go_router/go_router.dart';
 import 'providers/app_state.dart';
 import 'screens/home_screen.dart';
 import 'screens/room_screen.dart';
@@ -19,7 +18,7 @@ class IPLAuctionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (context) => AppState(),
-      child: MaterialApp.router(
+      child: MaterialApp(
         title: 'IPL Auction',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
@@ -33,45 +32,15 @@ class IPLAuctionApp extends StatelessWidget {
             elevation: 0,
           ),
         ),
-        routerConfig: _router,
+        home: const HomeScreen(),
+        routes: {
+          '/': (context) => const HomeScreen(),
+          '/room': (context) => const RoomScreen(roomCode: 'DEMO'),
+          '/team-selection': (context) => const TeamSelectionScreen(roomCode: 'DEMO'),
+          '/auction': (context) => const AuctionScreen(roomCode: 'DEMO'),
+          '/summary': (context) => const SummaryScreen(roomCode: 'DEMO'),
+        },
       ),
     );
   }
 }
-
-final GoRouter _router = GoRouter(
-  routes: [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const HomeScreen(),
-    ),
-    GoRoute(
-      path: '/room/:code',
-      builder: (context, state) {
-        final code = state.pathParameters['code']!;
-        return RoomScreen(roomCode: code);
-      },
-    ),
-    GoRoute(
-      path: '/team-selection/:code',
-      builder: (context, state) {
-        final code = state.pathParameters['code']!;
-        return TeamSelectionScreen(roomCode: code);
-      },
-    ),
-    GoRoute(
-      path: '/auction/:code',
-      builder: (context, state) {
-        final code = state.pathParameters['code']!;
-        return AuctionScreen(roomCode: code);
-      },
-    ),
-    GoRoute(
-      path: '/summary/:code',
-      builder: (context, state) {
-        final code = state.pathParameters['code']!;
-        return SummaryScreen(roomCode: code);
-      },
-    ),
-  ],
-);

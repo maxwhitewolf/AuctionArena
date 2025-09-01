@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:go_router/go_router.dart';
 import '../providers/app_state.dart';
 import '../widgets/gradient_button.dart';
 import '../widgets/custom_text_field.dart';
@@ -40,7 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (appState.error == null && appState.currentRoomCode != null) {
       if (mounted) {
-        context.go('/room/${appState.currentRoomCode}');
+        Navigator.of(context).pushNamed('/room');
       }
     }
   }
@@ -56,7 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (appState.error == null && appState.currentRoomCode != null) {
       if (mounted) {
-        context.go('/room/${appState.currentRoomCode}');
+        Navigator.of(context).pushNamed('/room');
       }
     }
   }
@@ -208,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCreateRoomCard() {
     return Card(
       elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Form(
@@ -289,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildJoinRoomCard() {
     return Card(
       elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Form(
